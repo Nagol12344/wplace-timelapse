@@ -1,4 +1,12 @@
-import json, downloader, os, typing, ffmpeg, datetime, time
+import json
+import downloader
+import os
+import typing
+import ffmpeg
+import datetime
+import time
+import requests
+
 
 class Config:
 
@@ -18,7 +26,7 @@ class Config:
             raise ValueError("Invalid videoSaveDir.")
         if not config["location"]["start"] or not len(config["location"]["start"]) == 4 or config["location"]["start"][0] < 1 or config["location"]["start"][1] < 1 or config["location"]["start"][2] < 1 or config["location"]["start"][3] < 1:
             print(config["location"]["start"])
-            raise ValueError("Invalid location.start")            
+            raise ValueError("Invalid location.start")
         if not config["location"]["end"] or not len(config["location"]["end"]) == 4 or config["location"]["end"][0] < 1 or config["location"]["end"][1] < 1 or config["location"]["end"][2] < 1 or config["location"]["end"][3] < 1:
             raise ValueError("Invalid location.end")
 
@@ -34,12 +42,37 @@ class Config:
 
     def get_video_save_dir(self) -> str:
         return self.config["videoSaveDir"]
-    
+
     def get_location_start(self) -> typing.List[int]:
         return self.config["location"]["start"]
-    
+
     def get_location_end(self) -> typing.List[int]:
         return self.config["location"]["end"]
+
+    def get_webhook_url(self) -> str:
+        return self.config["webhookUrl"]
+
+
+def send_webhook(webhook_url: str):
+    if webhook_url == "":
+        return
+    data = {
+        "embeds": [
+            {
+                "title": "Video generated",
+                "description": "Next video created!",
+            }
+        ],
+        "attachments": []
+    }
+    try:
+        response = requests.post(webhook_url, json=data)
+        if response.status_code != 204 and response.status_code != 200:
+            print(
+                f"Failed to send webhook: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"Exception occurred while sending webhook: {e}")
+
 
 def main():
     config = Config()
@@ -50,11 +83,12 @@ def main():
             filenumber = int(file.split(".")[0])
             if filenumber > lastImage:
                 lastImage = filenumber
-    os.makedirs(config.get_image_save_dir(), exist_ok=True); os.makedirs(config.get_video_save_dir(), exist_ok=True)
+    os.makedirs(config.get_image_save_dir(), exist_ok=True)
+    os.makedirs(config.get_video_save_dir(), exist_ok=True)
     while True:
         lastImage += 1
         print(f"Downloading image {lastImage}")
-        try: 
+        try:
             downloader.download_image(
                 tuple(config.get_location_start()),
                 tuple(config.get_location_end()),
@@ -70,8 +104,9 @@ def main():
             (
                 ffmpeg
                 .input(f"{config.get_image_save_dir()}/%05d.png", framerate=15)
-                .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')  # ensure even dimensions
-                .output(f"{config.get_video_save_dir()}/timelapse_{datetime.date.today().isoformat()}.mp4", vcodec="libx264", pix_fmt="yuv420p")
+                # ensure even dimensions
+                .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
+                .output(f"{config.get_video_save_dir()}/timelapse_{datetime.date.today().isoformat()}_{datetime.datetime.now().time()}.mp4", vcodec="libx264", pix_fmt="yuv420p")
                 .run(overwrite_output=True)
             )
             # delete all the images if the video was created successfully
@@ -79,7 +114,9 @@ def main():
             for file in directory:
                 os.remove(f"{config.get_image_save_dir()}/{file}")
             lastImage = 0
+            send_webhook(config.get_webhook_url())
         time.sleep(config.get_interval())
-    
+
+
 if __name__ == "__main__":
     main()
