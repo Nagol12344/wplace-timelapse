@@ -1,6 +1,6 @@
 import json
 import downloader
-import os
+import os, sys
 import typing
 import ffmpeg
 import datetime
@@ -73,6 +73,38 @@ def send_webhook(webhook_url: str):
     except Exception as e:
         print(f"Exception occurred while sending webhook: {e}")
 
+def run_timelapse_parser(lastImage: int, config: Config, sleep: bool=False):
+    lastImage += 1
+    print(f"Downloading image {lastImage}")
+    try:
+        downloader.download_image(
+            tuple(config.get_location_start()),
+            tuple(config.get_location_end()),
+            return_image=True
+        ).save(f"{config.get_image_save_dir()}/{lastImage:05}.png")
+    except Exception as e:
+        print(f"Error downloading image: {e}")
+        lastImage -= 1
+        time.sleep(10)
+        raise Exception("whoops")
+    if lastImage % config.get_images_per_video() == 0:
+        print("Creating timelapse video")
+        (
+            ffmpeg
+            .input(f"{config.get_image_save_dir()}/%05d.png", framerate=15)
+            # ensure even dimensions
+            .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
+            .output(f"{config.get_video_save_dir()}/timelapse_{datetime.date.today().isoformat()}_{datetime.datetime.now().time()}.mp4", vcodec="libx264", pix_fmt="yuv420p")
+            .run(overwrite_output=True)
+        )
+        # delete all the images if the video was created successfully
+        directory = os.listdir(config.get_image_save_dir())
+        for file in directory:
+            os.remove(f"{config.get_image_save_dir()}/{file}")
+        lastImage = 0
+        send_webhook(config.get_webhook_url())
+    if sleep:
+        time.sleep(config.get_interval())
 
 def main():
     config = Config()
@@ -85,37 +117,20 @@ def main():
                 lastImage = filenumber
     os.makedirs(config.get_image_save_dir(), exist_ok=True)
     os.makedirs(config.get_video_save_dir(), exist_ok=True)
+    try:
+        if sys.argv[1] == "--cron": 
+            try: 
+                run_timelapse_parser(lastImage, config, sleep=False)
+            except:
+                run_timelapse_parser(lastImage, config, sleep=False)
+            exit()
+    except IndexError: # there is no way there isnt a better way to solve this problem I just don't care to find it
+        pass
     while True:
-        lastImage += 1
-        print(f"Downloading image {lastImage}")
-        try:
-            downloader.download_image(
-                tuple(config.get_location_start()),
-                tuple(config.get_location_end()),
-                return_image=True
-            ).save(f"{config.get_image_save_dir()}/{lastImage:05}.png")
-        except Exception as e:
-            print(f"Error downloading image: {e}")
-            lastImage -= 1
-            time.sleep(10)
-            continue
-        if lastImage % config.get_images_per_video() == 0:
-            print("Creating timelapse video")
-            (
-                ffmpeg
-                .input(f"{config.get_image_save_dir()}/%05d.png", framerate=15)
-                # ensure even dimensions
-                .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
-                .output(f"{config.get_video_save_dir()}/timelapse_{datetime.date.today().isoformat()}_{datetime.datetime.now().time()}.mp4", vcodec="libx264", pix_fmt="yuv420p")
-                .run(overwrite_output=True)
-            )
-            # delete all the images if the video was created successfully
-            directory = os.listdir(config.get_image_save_dir())
-            for file in directory:
-                os.remove(f"{config.get_image_save_dir()}/{file}")
-            lastImage = 0
-            send_webhook(config.get_webhook_url())
-        time.sleep(config.get_interval())
+        try: 
+            run_timelapse_parser(lastImage, config, sleep=True)
+        except:
+            run_timelapse_parser(lastImage, config, sleep=True)
 
 
 if __name__ == "__main__":
