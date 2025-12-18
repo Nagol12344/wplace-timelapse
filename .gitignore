@@ -2,3 +2,6 @@ videos/
 images/
 config.json
 config.json.old2
+client_secrets.json
+main.py-oauth2.json
+upload_video.py-oauth2.json
