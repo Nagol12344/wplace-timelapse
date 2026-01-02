@@ -113,46 +113,65 @@ def run_timelapse_parser(lastImage: int, config: Config, sleep: bool = False):
         time.sleep(10)
         raise Exception("whoops")
     if lastImage % config.get_images_per_video() == 0:
-        name = f"{config.get_video_save_dir()}/timelapse_{datetime.date.today().isoformat()}_{datetime.datetime.now().time()}.mp4"
-        print("Creating timelapse video")
-        (
-            ffmpeg
-            .input(f"{config.get_image_save_dir()}/%05d.png", framerate=15)
-            # ensure even dimensions
-            .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
-            .output(name, vcodec="libx264", pix_fmt="yuv420p")
-            .run(overwrite_output=True)
-        )
-        # delete all the images if the video was created successfully
-        directory = os.listdir(config.get_image_save_dir())
-        for file in directory:
-            os.remove(f"{config.get_image_save_dir()}/{file}")
-        lastImage = 0
-        command = [
-            "python", "upload_video.py",
-            "--file", name,
-            "--title", "Swarm V Swarm Wplace Event Day {}!",
-            "--description", "Part of the Swarm WPlace Art Reaction Media project. This link can be shared, it is left unlisted to prevent finding in home pages.",
-            "--keywords", "wplace,timelapse",
-            "--category", "22",
-            "--privacyStatus", "unlisted"
-        ]
+        try: 
+            name = f"{config.get_video_save_dir()}/timelapse_{datetime.date.today().isoformat()}_{datetime.datetime.now().time()}.mp4"
+            print("Creating timelapse video")
+            (
+                ffmpeg
+                .input(f"{config.get_image_save_dir()}/%05d.png", framerate=15)
+                # ensure even dimensions
+                .filter('scale', 'trunc(iw/2)*2', 'trunc(ih/2)*2')
+                .output(name, vcodec="libx264", pix_fmt="yuv420p")
+                .run(overwrite_output=True)
+            )
+            # delete all the images if the video was created successfully
+            # compress all images into a tar and place in ../backup_images/
+            backup_dir = os.path.join(os.path.dirname(config.get_image_save_dir()), "../backup_images")
+            os.makedirs(backup_dir, exist_ok=True)
+            tar_name = os.path.join(backup_dir, f"images_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.tar.gz")
+            with subprocess.Popen(
+                ["tar", "-czf", tar_name, "-C", config.get_image_save_dir(), "."],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            ) as proc:
+                out, err = proc.communicate()
+                if proc.returncode != 0:
+                    print(f"Error creating tar archive: {err.decode()}")
+            directory = os.listdir(config.get_image_save_dir())
+            for file in directory:
+                os.remove(f"{config.get_image_save_dir()}/{file}")
+            lastImage = 0
+            command = [
+                "python", "upload_video.py",
+                "--file", name,
+                "--title", "Swarm V Swarm Wplace Event Day {}!",
+                "--description", "Part of the Swarm WPlace Art Reaction Media project. This link can be shared, it is left unlisted to prevent finding in home pages.",
+                "--keywords", "wplace,timelapse",
+                "--category", "22",
+                "--privacyStatus", "unlisted"
+            ]
 
-        # Execute and capture stdout
-        result = subprocess.run(command, capture_output=True, text=True)
-        print(result.stdout)
-        video_id = None
-        for line in result.stdout.splitlines():
-            if line.startswith("VIDEO_ID="):
-                video_id = line.split("=", 1)[1]
-                break
-            
-        if not video_id:
-            raise RuntimeError("Upload succeeded but no video ID found")
-        args = 0 # dude idk im cheating this part
-        youtube = get_authenticated_service(args)
-        add_video_to_playlist(youtube, video_id, config.get_playlist_id())
-        send_webhook(config.get_webhook_url(), video_id)       
+            # Execute and capture stdout
+            result = subprocess.run(command, capture_output=True, text=True)
+            print(result.stdout)
+            video_id = None
+            for line in result.stdout.splitlines():
+                if line.startswith("VIDEO_ID="):
+                    video_id = line.split("=", 1)[1]
+                    break
+                
+            if not video_id:
+                raise RuntimeError("Upload succeeded but no video ID found")
+            args = 0 # dude idk im cheating this part
+            youtube = get_authenticated_service(args)
+            add_video_to_playlist(youtube, video_id, config.get_playlist_id())
+            send_webhook(config.get_webhook_url(), video_id)       
+        except Exception as e:
+            print(f"Error creating/uploading video: {e}")
+            #output error to a log file
+            with open("error.log", "a") as f:
+                f.write(f"{datetime.datetime.now().isoformat()}: {e}\n")
+            raise Exception("whoops")
     if sleep:
         time.sleep(config.get_interval())
 
